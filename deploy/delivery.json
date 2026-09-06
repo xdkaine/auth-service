@@ -23,5 +23,20 @@
       "target": "migration-tool",
       "buildArgs": ""
     }
-  ]
+  ],
+  "reusableImageInputs": {
+    "auth-migrate": [
+      "prisma",
+      "prisma.config.ts",
+      "package.json",
+      "package-lock.json",
+      "Dockerfile",
+      ".dockerignore",
+      "tsconfig.json",
+      "scripts",
+      "eslint.config.mjs",
+      "deploy/delivery.json",
+      ".github/workflows/delivery.yml"
+    ]
+  }
 }

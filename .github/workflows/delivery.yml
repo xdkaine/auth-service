@@ -14,6 +14,9 @@ jobs:
   checks:
     uses: ./.github/workflows/checks.yml
   matrix:
+    permissions:
+      contents: read
+      packages: read
     runs-on: ubuntu-24.04
     outputs:
       images: ${{ steps.config.outputs.images }}
@@ -21,17 +24,17 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
       - id: config
-        run: |
-          python3 - <<'PY'
-          import json, os, sys
-          sys.path.insert(0, 'deploy/scripts')
-          from publish_release import validate_config
-          config = json.load(open('deploy/delivery.json'))
-          validate_config(config)
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write('images=' + json.dumps({'include': config['images']}, separators=(',', ':')) + '\n')
-          PY
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 deploy/scripts/plan_images.py
       - run: python3 -m unittest discover -s deploy/scripts -p '*_test.py'
   images:
     needs: [checks, matrix]
@@ -48,13 +51,16 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+      - if: matrix.build
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - if: matrix.build
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: build
+        if: matrix.build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: ${{ matrix.context }}
@@ -74,13 +80,15 @@ jobs:
       - name: Record immutable image
         env:
           IMAGE_KIND: ${{ matrix.kind }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest || matrix.digest }}
+          IMAGE_BUILT_FROM: ${{ matrix.builtFrom }}
+          IMAGE_INPUT_HASH: ${{ matrix.inputHash }}
         run: |
           python3 - <<'PY'
           import json, os, pathlib
           pathlib.Path('digests').mkdir(exist_ok=True)
           kind = os.environ['IMAGE_KIND']
-          pathlib.Path('digests', kind + '.json').write_text(json.dumps({'kind': kind, 'digest': os.environ['IMAGE_DIGEST'], 'source': os.environ['GITHUB_SHA']}))
+          pathlib.Path('digests', kind + '.json').write_text(json.dumps({'kind': kind, 'digest': os.environ['IMAGE_DIGEST'], 'source': os.environ['GITHUB_SHA'], 'builtFrom': os.environ['IMAGE_BUILT_FROM'], 'inputHash': os.environ['IMAGE_INPUT_HASH']}))
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -94,6 +102,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      packages: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -103,6 +112,12 @@ jobs:
           pattern: digest-*
           path: digests
           merge-multiple: true
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish complete deployment receipt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

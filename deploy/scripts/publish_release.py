@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import urllib.error
 import urllib.request
+from functools import lru_cache
 
 SHA = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -66,13 +67,100 @@ def schema_hashes(config, root=Path('.')):
     return result
 
 
-def make_receipt(config, directory, branch, source, run_id):
+@lru_cache(maxsize=32)
+def resolve_digest(image):
+    output = subprocess.check_output(['docker', 'buildx', 'imagetools', 'inspect', image,
+                                     '--format', '{{.Manifest.Digest}}'], text=True,
+                                     stderr=subprocess.DEVNULL, timeout=45).strip()
+    if not DIGEST.fullmatch(output):
+        raise ValueError('Registry did not return an immutable base digest.')
+    return output
+
+
+def external_docker_images(body):
+    images, stages = set(), set()
+    for image, stage in re.findall(r'^FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?', body, re.M | re.I):
+        if image.lower() not in stages and image.lower() != 'scratch':
+            images.add(image)
+        if stage:
+            stages.add(stage.lower())
+    syntax = re.search(r'^#\s*syntax\s*=\s*(\S+)', body, re.M)
+    if syntax:
+        images.add(syntax.group(1))
+    return sorted(images)
+
+
+def image_input_hashes(config, root=Path('.'), resolver=None):
+    inputs = config.get('reusableImageInputs', {})
+    if not isinstance(inputs, dict) or set(inputs) - {'auth-migrate'}:
+        raise ValueError('Only the migration artifact may reuse a prior image.')
+    allowed = validate_config(config)
+    if set(inputs) - set(allowed):
+        raise ValueError('Reusable image must be configured.')
+    result = schema_hashes({'schemaInputs': inputs}, root)
+    resolver = resolver or resolve_digest
+    for kind, file_hash in result.items():
+        image = next(item for item in config['images'] if item['kind'] == kind)
+        dockerfile = image.get('dockerfile', 'Dockerfile')
+        if not isinstance(dockerfile, str) or Path(dockerfile).is_absolute() or '..' in Path(dockerfile).parts:
+            raise ValueError('Unsafe reusable Dockerfile path.')
+        path = root / dockerfile
+        if path.is_symlink() or not path.is_file():
+            raise ValueError('Reusable Dockerfile must be a regular file.')
+        bases = {}
+        for reference in external_docker_images(path.read_text()):
+            resolved = resolver(reference)
+            if not isinstance(resolved, str) or not DIGEST.fullmatch(resolved):
+                raise ValueError('Invalid resolved Docker input digest.')
+            bases[reference] = resolved
+        framed = json.dumps({'files': file_hash, 'image': image, 'bases': bases}, sort_keys=True, separators=(',', ':')).encode()
+        result[kind] = 'sha256:' + hashlib.sha256(framed).hexdigest()
+    return result
+
+
+def reuse_evidence(config, baseline, kind, input_hash, branch):
+    if kind != 'auth-migrate' or not isinstance(baseline, dict):
+        return None
+    if kind not in config.get('reusableImageInputs', {}) or not isinstance(input_hash, str) or not DIGEST.fullmatch(input_hash):
+        return None
+    if baseline.get('schema') != 1 or baseline.get('repository') != config['repository'] or baseline.get('branch') != branch:
+        return None
+    if not isinstance(baseline.get('source'), str) or not SHA.fullmatch(baseline['source']):
+        return None
+    if any(not isinstance(baseline.get(field), dict) for field in ('imageInputHashes', 'images', 'builtFrom')):
+        return None
+    if baseline.get('imageInputHashes', {}).get(kind) != input_hash:
+        return None
+    image = baseline.get('images', {}).get(kind, '')
+    prefix = validate_config(config)[kind] + '@'
+    built_from = baseline.get('builtFrom', {}).get(kind, '')
+    if not isinstance(image, str) or not image.startswith(prefix) or not DIGEST.fullmatch(image[len(prefix):]):
+        return None
+    if not isinstance(built_from, str) or not SHA.fullmatch(built_from):
+        return None
+    return {'digest': image[len(prefix):], 'builtFrom': built_from}
+
+
+def load_baseline(api, branch):
+    from urllib.parse import quote
+    result = api('contents/release.json?ref=' + quote('deploy/' + branch, safe=''), missing_ok=True)
+    if not result:
+        return None
+    try:
+        return json.loads(base64.b64decode(result['content'], validate=False))
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def make_receipt(config, directory, branch, source, run_id, *, baseline=None, root=Path('.'), resolver=None):
     allowed = validate_config(config)
     if branch not in ('dev', 'main') or not SHA.fullmatch(source):
         raise ValueError('Expected main/dev and a full source SHA.')
     if not str(run_id).isdigit() or int(run_id) <= 0:
         raise ValueError('Invalid workflow run ID.')
     result = {}
+    inputs = image_input_hashes(config, root, resolver=resolver)
+    provenance = {}
     for path in sorted(Path(directory).glob('*.json')):
         item = json.loads(path.read_text())
         kind = item.get('kind')
@@ -83,11 +171,22 @@ def make_receipt(config, directory, branch, source, run_id):
         digest = item.get('digest', '')
         if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
             raise ValueError('Expected an immutable SHA-256 digest.')
+        built_from = item.get('builtFrom', source)
+        if not isinstance(built_from, str) or not SHA.fullmatch(built_from):
+            raise ValueError('Invalid original image build revision.')
+        if kind in inputs and item.get('inputHash') != inputs[kind]:
+            raise ValueError('Migration build inputs changed after planning.')
+        if built_from != source:
+            evidence = reuse_evidence(config, baseline, kind, inputs.get(kind), branch)
+            if not evidence or evidence != {'digest': digest, 'builtFrom': built_from}:
+                raise ValueError('Reused image lacks matching prior receipt provenance.')
+        provenance[kind] = built_from
         result[kind] = allowed[kind] + '@' + digest
     if set(result) != set(allowed):
         raise ValueError('The complete configured image set is required.')
     return {'schema': 1, 'repository': config['repository'], 'branch': branch,
-            'source': source, 'images': result, 'runId': str(run_id)}
+            'source': source, 'images': result, 'runId': str(run_id),
+            'builtFrom': provenance, 'imageInputHashes': inputs}
 
 
 class GitHub:
@@ -142,10 +241,13 @@ def main():
         raise ValueError('Publishing requires a main/dev branch workflow.')
     if os.environ.get('GITHUB_REPOSITORY') != config['repository']:
         raise ValueError('Unexpected source repository.')
-    receipt = make_receipt(config, args.digests, ref.removeprefix('refs/heads/'),
-                           os.environ['GITHUB_SHA'], os.environ['GITHUB_RUN_ID'])
+    api = GitHub(config['repository'], os.environ['GH_TOKEN'])
+    branch = ref.removeprefix('refs/heads/')
+    receipt = make_receipt(config, args.digests, branch,
+                           os.environ['GITHUB_SHA'], os.environ['GITHUB_RUN_ID'],
+                           baseline=load_baseline(api, branch))
     receipt['schemaHashes'] = schema_hashes(config)
-    if publish(GitHub(config['repository'], os.environ['GH_TOKEN']), receipt):
+    if publish(api, receipt):
         print('Published complete immutable deployment receipt.')
     else:
         print('A newer source commit exists; stale release skipped.')
