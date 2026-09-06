@@ -13,3 +13,7 @@ coverage/
 *.dump
 *.rdb
 .DS_Store
+
+# Python delivery-tool caches
+__pycache__/
+*.py[cod]
