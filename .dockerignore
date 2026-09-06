@@ -1,0 +1,12 @@
+**
+!package.json
+!package-lock.json
+!prisma.config.ts
+!tsconfig.json
+!eslint.config.mjs
+!prisma/
+!prisma/**
+!scripts/
+!scripts/**
+!src/
+!src/**
