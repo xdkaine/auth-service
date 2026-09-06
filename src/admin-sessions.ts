@@ -47,9 +47,5 @@ export async function isAdminSessionLive(redis: AdminSessionStore, id: string): 
 /** Removes exactly this identifier; false when it was absent or unusable. */
 export async function revokeAdminSession(redis: AdminSessionStore, id: string): Promise<boolean> {
   if (!isAdminSessionId(id)) return false;
-  try {
-    return Number(await redis.del(recordKey(id))) > 0;
-  } catch {
-    return false;
-  }
+  return Number(await redis.del(recordKey(id))) > 0;
 }

@@ -495,7 +495,12 @@ export async function handleAdminLogout(
 ): Promise<void> {
   const session = verifyAdminSession(readCookie(req, ADMIN_COOKIE_NAME), config.cookieKeys[0]);
   if (session) {
-    await revokeAdminSession(redis, session.j).catch(() => undefined);
+    try { await revokeAdminSession(redis, session.j); }
+    catch {
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ error: 'Session termination failed. Please retry.' }));
+      return;
+    }
     const ip = clientIp(req, { trustForwardedHeaders: config.trustProxyHeaders });
     const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null;
     await auditAdminEvent({ action: 'ADMIN_LOGOUT', username: session.u, outcome: 'success', ip, userAgent });

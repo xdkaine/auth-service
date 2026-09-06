@@ -87,6 +87,6 @@ describe('admin console session records', () => {
     };
     await expect(mintAdminSessionRecord(broken)).rejects.toThrow('redis down');
     expect(await isAdminSessionLive(broken, 'aaaaaaaaaaaaaaaaaaaa')).toBe(false);
-    expect(await revokeAdminSession(broken, 'aaaaaaaaaaaaaaaaaaaa')).toBe(false);
+    await expect(revokeAdminSession(broken, 'aaaaaaaaaaaaaaaaaaaa')).rejects.toThrow('redis down');
   });
 });

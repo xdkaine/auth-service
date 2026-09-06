@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { attachLoginContext, type ScanCapableRedis } from './session-store';
 
 const PREFIX = 'oidc:';
+const REVOKED_SESSION_PREFIX = 'authsvc:revoked-session:';
 /**
  * Hard ceiling the Redis adapter applies to EVERY expiring provider record.
  * Registry-configured session lifetimes must never exceed this value (see
@@ -116,6 +117,21 @@ export class RedisAdapter implements Adapter {
   }
 
   async upsert(id: string, payload: AdapterPayload, expiresIn: number): Promise<void> {
+    if (this.name === 'Session') {
+      if (!this.redis.eval) throw new Error('Atomic session persistence is unavailable');
+      const ttl = Math.max(1, Math.min(Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : DEFAULT_TTL_SECONDS, DEFAULT_TTL_SECONDS));
+      const saved = await this.redis.eval(
+        "if redis.call('exists', KEYS[1]) == 1 then return 0 end; redis.call('set', KEYS[2], ARGV[1], 'EX', ARGV[2]); return 1",
+        { keys: [REVOKED_SESSION_PREFIX + id, this.key(id)], arguments: [JSON.stringify(payload), String(ttl)] }
+      );
+      if (Number(saved) !== 1) throw new Error('Session was revoked');
+      if (payload.uid) await this.redis.set(`${PREFIX}${this.name}:uid:${payload.uid}`, id, { EX: ttl });
+      if (typeof payload.accountId === 'string' && payload.accountId) {
+        await attachLoginContext(this.redis as unknown as ScanCapableRedis, payload.accountId, id, ttl,
+          typeof payload.uid === 'string' ? payload.uid : undefined);
+      }
+      return;
+    }
     const lock = this.activeClientLock();
     if (lock) {
       if (lock.lost || !this.redis.eval) throw new Error('Client mutation lock was lost');
@@ -170,6 +186,7 @@ export class RedisAdapter implements Adapter {
   }
 
   async find(id: string): Promise<AdapterPayload | undefined> {
+    if (this.name === 'Session' && await this.redis.get(REVOKED_SESSION_PREFIX + id)) return undefined;
     const raw = await this.redis.get(this.key(id));
     if (!raw) return undefined;
     try {
@@ -192,6 +209,15 @@ export class RedisAdapter implements Adapter {
 
   async destroy(id: string): Promise<void> {
     const payload = await this.find(id);
+    if (this.name === 'Session') {
+      if (!this.redis.eval) throw new Error('Atomic session revocation is unavailable');
+      await this.redis.eval(
+        "redis.call('set', KEYS[1], '1', 'EX', ARGV[1]); return redis.call('del', KEYS[2])",
+        { keys: [REVOKED_SESSION_PREFIX + id, this.key(id)], arguments: [String(DEFAULT_TTL_SECONDS)] }
+      );
+      if (payload?.uid) await this.redis.del(`${PREFIX}${this.name}:uid:${payload.uid}`);
+      return;
+    }
     const lock = this.activeClientLock();
     if (lock) {
       if (lock.lost || !this.redis.eval) throw new Error('Client mutation lock was lost');

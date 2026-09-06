@@ -1,0 +1,14 @@
+import { beforeEach, expect, it, vi } from 'vitest';
+import type { AuthConfig } from './config';
+const mocks=vi.hoisted(()=>({find:vi.fn(),decrypt:vi.fn()}));
+vi.mock('./db',()=>({prisma:{oidcClient:{findUnique:mocks.find}}}));
+vi.mock('./secret-encryption',()=>({decryptClientSecret:mocks.decrypt}));
+import { authenticateSessionClient } from './session-client';
+const config={clientId:'bootstrap',clientSecret:'bootstrap-secret'} as AuthConfig;
+const basic=(id:string,secret:string)=>'Basic '+Buffer.from(id+':'+secret).toString('base64');
+beforeEach(()=>{vi.resetAllMocks();mocks.find.mockResolvedValue({enabled:true,secret:'encrypted'});mocks.decrypt.mockReturnValue('registered-secret');});
+it('accepts registered client only with current decryptable secret',async()=>{expect(await authenticateSessionClient(basic('registered','registered-secret'),config)).toBe('registered');expect(mocks.find).toHaveBeenCalledWith({where:{clientId:'registered'}});});
+it('rejects wrong credentials and disabled clients',async()=>{expect(await authenticateSessionClient(basic('registered','wrong'),config)).toBeNull();mocks.find.mockResolvedValue({enabled:false,secret:'encrypted'});expect(await authenticateSessionClient(basic('registered','registered-secret'),config)).toBeNull();});
+it('rejects unavailable or missing client secrets',async()=>{mocks.decrypt.mockReturnValue(null);expect(await authenticateSessionClient(basic('registered','registered-secret'),config)).toBeNull();mocks.find.mockRejectedValue(Error('DB unavailable'));await expect(authenticateSessionClient(basic('registered','registered-secret'),config)).rejects.toThrow();});
+it('preserves isolated bootstrap credential scope',async()=>{expect(await authenticateSessionClient(basic('bootstrap','bootstrap-secret'),config)).toBe('bootstrap');expect(mocks.find).not.toHaveBeenCalled();expect(await authenticateSessionClient(basic('registered','bootstrap-secret'),config)).toBeNull();});
+it.each([undefined,'Bearer bad','Basic '+Buffer.from('nocolon').toString('base64'),'Basic !!!'])('rejects malformed auth',async(header)=>{expect(await authenticateSessionClient(header,config)).toBeNull();});

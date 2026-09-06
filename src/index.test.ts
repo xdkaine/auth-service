@@ -125,6 +125,13 @@ vi.mock('redis', () => ({
     ): Promise<number> => {
       if (harness.failRedisEval) throw new Error('redis down');
       const key = options.keys[0];
+      if (key.startsWith('authsvc:revoked-session:')) {
+        if (_script.includes("redis.call('exists'")) {
+          if (harness.redisStore.has(key)) return 0;
+          harness.redisStore.set(options.keys[1], options.arguments[0]); return 1;
+        }
+        harness.redisStore.set(key, '1'); return harness.redisStore.delete(options.keys[1]) ? 1 : 0;
+      }
       if (key.startsWith('oidc:lock:')) {
         const [lockKey, targetKey] = options.keys;
         const [token, value] = options.arguments;
@@ -956,7 +963,7 @@ describe('POST /session/backchannel-logout', () => {
       body: { sid: 'sid-value-1234567890' },
     });
 
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
     expect(harness.redisStore.has('oidc:Session:jti-live')).toBe(false);
     expect(harness.redisStore.has('oidc:Session:uid:internal-jti-live')).toBe(false);
     const row = auditRow('LOGOUT');
@@ -967,7 +974,7 @@ describe('POST /session/backchannel-logout', () => {
     });
   });
 
-  it('answers 204 with honest no-match accounting for unknown sids', async () => {
+  it('answers 200 with honest no-match accounting for unknown sids', async () => {
     seedPortalSession('sid-value-1234567890');
 
     const res = await request('/session/backchannel-logout', {
@@ -976,7 +983,7 @@ describe('POST /session/backchannel-logout', () => {
       body: { sid: 'unknown-sid-9876543' },
     });
 
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
     // Form-encoded variant still destroyed nothing.
     expect(harness.redisStore.has('oidc:Session:jti-live')).toBe(true);
     const row = auditRow('LOGOUT');
@@ -1015,7 +1022,7 @@ describe('POST /session/backchannel-logout', () => {
 
   it('reports 503 when the session cannot be destroyed, leaving state intact', async () => {
     seedPortalSession('sid-value-1234567890');
-    harness.failRedisDel = true;
+    harness.failRedisEval = true;
 
     const res = await request('/session/backchannel-logout', {
       method: 'POST',

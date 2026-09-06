@@ -47,6 +47,9 @@ function makeRedis() {
       for (const key of keys) if (redisStore.delete(key)) removed += 1;
       return removed;
     },
+    async eval(_script: string, options: { keys: string[]; arguments: string[] }): Promise<number> {
+      redisStore.set(options.keys[0], '1'); return redisStore.delete(options.keys[1]) ? 1 : 0;
+    },
     async *scanIterator(opts: { MATCH: string }): AsyncIterable<string> {
       const prefix = opts.MATCH.replace(/\*$/, '');
       for (const key of [...redisStore.keys()]) {

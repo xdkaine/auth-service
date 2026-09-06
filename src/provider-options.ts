@@ -91,6 +91,8 @@ export function buildProviderOptions(
   return {
     ...(jwks ? { jwks } : {}),
     renderError: providerErrorRenderer,
+    // Interactive tokens must die with the provider session, including refresh tokens.
+    expiresWithSession: async () => true,
     clients: [
       {
         client_id: config.clientId,

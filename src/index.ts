@@ -1,6 +1,9 @@
+import { reviewKubernetesToken } from './kubernetes-session';
+import { authenticateSessionClient } from './session-client';
+import { isClientSessionLive } from './session-liveness';
 import { evaluateApplicationAccess } from './application-access';
 import http from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash, timingSafeEqual } from 'node:crypto';
 import { createClient } from 'redis';
 import Provider from 'oidc-provider';
 import { loadConfig, type AuthConfig } from './config';
@@ -819,6 +822,7 @@ async function readJsonishBody(req: http.IncomingMessage): Promise<Record<string
 }
 
 async function handleBackchannelLogout(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }).end(); return; }
   const deny = () => {
     res.writeHead(401, {
       'Content-Type': 'application/json',
@@ -855,7 +859,10 @@ async function handleBackchannelLogout(req: http.IncomingMessage, res: http.Serv
     return;
   }
 
-  if (!verifyClientCredentials(req.headers.authorization, config.clientId, config.clientSecret)) {
+  let authenticatedClient: string | null;
+  try { authenticatedClient = await authenticateSessionClient(req.headers.authorization, config); }
+  catch { res.writeHead(503).end(); return; }
+  if (!authenticatedClient) {
     deny();
     return;
   }
@@ -884,7 +891,7 @@ async function handleBackchannelLogout(req: http.IncomingMessage, res: http.Serv
     destroyed = await destroySessionByClientSid(
       redis,
       parsed.sid,
-      config.clientId,
+      authenticatedClient,
       new RedisAdapter('Session', redis)
     );
   } catch (error) {
@@ -917,7 +924,8 @@ async function handleBackchannelLogout(req: http.IncomingMessage, res: http.Serv
       console.error('[auth] backchannel logout audit write failed', error);
     });
 
-  res.writeHead(204).end();
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.end(JSON.stringify({ destroyed }));
 }
 
 /**
@@ -1433,6 +1441,41 @@ async function main(): Promise<void> {
         'X-Content-Type-Options': 'nosniff',
       });
       res.end(body);
+      return;
+    }
+
+    if (path === '/session/kubernetes-token-review') {
+      const secret = process.env.KUBERNETES_WEBHOOK_SECRET;
+      const clientId = process.env.KUBERNETES_OIDC_CLIENT_ID;
+      const header = req.headers.authorization ?? '';
+      if (req.method !== 'POST') { res.writeHead(405).end(); return; }
+      if (!secret || secret.length < 32 || !clientId || !timingSafeEqual(
+        createHash('sha256').update(header).digest(), createHash('sha256').update('Bearer ' + secret).digest()
+      )) { res.writeHead(401).end(); return; }
+      try {
+        const body = await readJsonObjectBody(req);
+        const result = await reviewKubernetesToken(body, { issuer: config.issuer, clientId,
+          jwks: sharedProviderKeys().jwks, redis });
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(result));
+      } catch { res.writeHead(503).end(); }
+      return;
+    }
+
+    if (path === '/session/status') {
+      if (req.method !== 'POST') { res.writeHead(405, { Allow: 'POST' }).end(); return; }
+      try {
+        const id = await authenticateSessionClient(req.headers.authorization, config);
+        if (!id) { res.writeHead(401).end(); return; }
+        const body = await readJsonishBody(req);
+        const parsed = parseBackchannelBody(body);
+        if (!parsed || typeof body.sub !== 'string' || !body.sub || body.sub.length > 512) {
+          res.writeHead(400).end(); return;
+        }
+        const active = await isClientSessionLive(redis, parsed.sid, id, body.sub);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ active }));
+      } catch { res.writeHead(503).end(); }
       return;
     }
 

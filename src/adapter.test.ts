@@ -43,6 +43,13 @@ class MemoryRedis {
     script: string,
     options: { keys: string[]; arguments: string[] }
   ): Promise<unknown> {
+    if (script.includes("redis.call('exists'")) {
+      if (await this.get(options.keys[0])) return 0;
+      await this.set(options.keys[1], options.arguments[0], { EX: Number(options.arguments[1]) }); return 1;
+    }
+    if (script.startsWith("redis.call('set', KEYS[1], '1'")) {
+      await this.set(options.keys[0], '1', { EX: Number(options.arguments[0]) }); return this.del(options.keys[1]);
+    }
     const [lockKey, targetKey] = options.keys;
     const [token, value] = options.arguments;
     if (this.store.get(lockKey)?.value !== token) {
@@ -168,4 +175,13 @@ describe('RedisAdapter', () => {
     await expect(staleOwner).rejects.toThrow('Client mutation lock was lost');
     expect((await secondAdapter.find('acme-app'))?.marker).toBe('current');
   });
+});
+
+it('revoked session cannot be resurrected by a stale provider save', async () => {
+  const redis = new MemoryRedis(); const adapter = new RedisAdapter('Session', redis);
+  const stale = payload({ uid: 'old-uid' });
+  await adapter.upsert('session-1', stale, 3600);
+  await adapter.destroy('session-1');
+  await expect(adapter.upsert('session-1', stale, 3600)).rejects.toThrow('revoked');
+  expect(await adapter.findByUid('old-uid')).toBeUndefined();
 });

@@ -28,6 +28,17 @@ class MemoryRedis {
     return 'OK';
   }
 
+  async eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown> {
+    if (script.includes("redis.call('exists'")) {
+      if (await this.get(options.keys[0])) return 0;
+      await this.set(options.keys[1], options.arguments[0], { EX: Number(options.arguments[1]) }); return 1;
+    }
+    if (script.startsWith("redis.call('set', KEYS[1], '1'")) {
+      await this.set(options.keys[0], '1', { EX: Number(options.arguments[0]) }); return this.del(options.keys[1]);
+    }
+    throw new Error('Unsupported test script');
+  }
+
   async expire(key: string, seconds: number): Promise<unknown> {
     const entry = this.store.get(key);
     if (entry) entry.ttl = seconds;

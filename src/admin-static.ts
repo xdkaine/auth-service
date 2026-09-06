@@ -650,8 +650,8 @@ var fmtWhen = function (iso) {
   button.addEventListener('click', function () {
     button.disabled = true;
     fetch('/admin/logout', { method: 'POST', credentials: 'same-origin' })
-      .catch(function () { /* clearing cookies succeeded server-side regardless */ })
-      .then(function () { window.location.href = '/admin'; });
+      .then(function (response) { if (!response.ok) throw new Error('Sign out was not confirmed'); window.location.href = '/admin'; })
+      .catch(function () { button.disabled = false; button.textContent = 'Retry sign out'; button.title = 'Session termination failed. Please retry.'; });
   });
 })();
 
