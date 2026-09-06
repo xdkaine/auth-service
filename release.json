@@ -1,0 +1,14 @@
+{
+  "branch": "main",
+  "images": {
+    "auth": "ghcr.io/xdkaine/auth-service@sha256:aa61ef049ec1b07e03e6734cb539b20a1fc30ab43aab7de5490ca9fded674682",
+    "auth-migrate": "ghcr.io/xdkaine/auth-service-migrate@sha256:5106cf5dec00f9a83a2936b64d9eb6ac5c1c480ef5df3a367cb0acc7dac38963"
+  },
+  "repository": "xdkaine/auth-service",
+  "runId": "34015698027",
+  "schema": 1,
+  "schemaHashes": {
+    "auth": "sha256:6b92a5496ad91d1f1407ca6773fc9e9c0ffd8256c9553ea77cfca42dfc39892f"
+  },
+  "source": "ff3a9d095c9b5569ad67ab974c124f2bf7f2fe5e"
+}
