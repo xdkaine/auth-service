@@ -1,14 +1,21 @@
 {
   "branch": "dev",
+  "builtFrom": {
+    "auth": "8e38cae8b3c791ec510c6aba39149d10464072fb",
+    "auth-migrate": "8e38cae8b3c791ec510c6aba39149d10464072fb"
+  },
+  "imageInputHashes": {
+    "auth-migrate": "sha256:8c6d55e74e9c1306c17b57ff2229d4827dc38323fa82956b435f9b0354738771"
+  },
   "images": {
-    "auth": "ghcr.io/xdkaine/auth-service@sha256:69f75500cbaf54c29c01e14c9461a67b4f7a24c2ac4f35a8770190440c348ff0",
-    "auth-migrate": "ghcr.io/xdkaine/auth-service-migrate@sha256:9f54b965a792d0f144faf45486441406416b6a1d800695052922415144acb1a2"
+    "auth": "ghcr.io/xdkaine/auth-service@sha256:6db792f6dae460bf3deed35bb35b6f0362a8e1489092ca618b4f9856ba028e22",
+    "auth-migrate": "ghcr.io/xdkaine/auth-service-migrate@sha256:3e56ca7d2089e6544fd464bb630948d484977c429bf8eb6cc99d65cb50d4b049"
   },
   "repository": "xdkaine/auth-service",
-  "runId": "34015391292",
+  "runId": "34018063213",
   "schema": 1,
   "schemaHashes": {
     "auth": "sha256:6b92a5496ad91d1f1407ca6773fc9e9c0ffd8256c9553ea77cfca42dfc39892f"
   },
-  "source": "ff3a9d095c9b5569ad67ab974c124f2bf7f2fe5e"
+  "source": "8e38cae8b3c791ec510c6aba39149d10464072fb"
 }
