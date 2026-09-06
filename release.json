@@ -1,21 +1,21 @@
 {
   "branch": "main",
   "builtFrom": {
-    "auth": "3f334ec3f2052f10329de85be21dbbc67ae643bf",
-    "auth-migrate": "8e38cae8b3c791ec510c6aba39149d10464072fb"
+    "auth": "be20d2b6c8f53a4caad9682fb29e160e09ad15c2",
+    "auth-migrate": "be20d2b6c8f53a4caad9682fb29e160e09ad15c2"
   },
   "imageInputHashes": {
-    "auth-migrate": "sha256:8c6d55e74e9c1306c17b57ff2229d4827dc38323fa82956b435f9b0354738771"
+    "auth-migrate": "sha256:4d6539472a932045ac2b73ce9b9e89ac0fbf862bb775cc6f0a0ec011bcdc439b"
   },
   "images": {
-    "auth": "ghcr.io/xdkaine/auth-service@sha256:666ab522b06cacfcdbb584d349334eb33bec3d2e7299abb4192dfe25b36260b1",
-    "auth-migrate": "ghcr.io/xdkaine/auth-service-migrate@sha256:d4c8e8c8d41f671ce0a09af6a975da9d9c84fc2148ec041cf9a2baff35169739"
+    "auth": "ghcr.io/xdkaine/auth-service@sha256:be1f70980d95a84af73962b7b1c9538cf1952a7d136226e62debf51dd393d73c",
+    "auth-migrate": "ghcr.io/xdkaine/auth-service-migrate@sha256:be9a8aecf51be42e59827951d4873115a8fe829aee439a3cc47618753ef52e88"
   },
   "repository": "xdkaine/auth-service",
-  "runId": "34018679670",
+  "runId": "34026015386",
   "schema": 1,
   "schemaHashes": {
     "auth": "sha256:6b92a5496ad91d1f1407ca6773fc9e9c0ffd8256c9553ea77cfca42dfc39892f"
   },
-  "source": "3f334ec3f2052f10329de85be21dbbc67ae643bf"
+  "source": "be20d2b6c8f53a4caad9682fb29e160e09ad15c2"
 }
