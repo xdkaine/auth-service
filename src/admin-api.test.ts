@@ -196,6 +196,40 @@ describe('console client registry guards', () => {
     dbState.failRecoveryAccountCount = false;
   });
 
+  it('persists and lists an AD-admin configured restricted policy', async () => {
+    const accessPolicy = { restricted: true, mappings: [{ groupDn: 'CN=K3s-Viewers,OU=Groups,DC=example,DC=test', role: 'viewer' }] };
+    const created = await callApi('POST', 'registry', { name: 'Headlamp', redirectUris: ['https://k3s.example.test/oidc-callback'], accessPolicy });
+    expect(created.status).toBe(201);
+    const clientId = JSON.parse(created.body).client.clientId;
+    const listed = await callApi('GET', 'registry');
+    expect(JSON.parse(listed.body).canManageAccessPolicy).toBe(true);
+    expect(JSON.parse(listed.body).clients[0].accessPolicy).toEqual(accessPolicy);
+    const empty = { restricted: true, mappings: [] };
+    expect((await callApi('PATCH', `registry/${clientId}`, { accessPolicy: empty })).status).toBe(200);
+    expect(dbState.rows[0].accessPolicy).toEqual(empty);
+  });
+
+  it('rejects invalid policies without changing the registry', async () => {
+    for (const accessPolicy of [null, { restricted: 'true', mappings: [] }, { restricted: true, mappings: [{ groupDn: 'K3s-Admins', role: 'administrator' }] }]) {
+      expect((await callApi('POST', 'registry', { name: 'Headlamp', redirectUris: ['https://k3s.example.test/callback'], accessPolicy })).status).toBe(400);
+    }
+    expect(dbState.rows).toHaveLength(0);
+  });
+
+  it('denies recovery principals policy writes and exposes read-only capability', async () => {
+    const principal = { username: 'recovery', authMethod: 'local_recovery' as const, sessionId: 'recovery-session', viaGroup: false };
+    for (const [method, path] of [['POST', 'registry'], ['PATCH', 'registry/headlamp']]) {
+      const res = captureRes();
+      await handleAdminApi(jsonRequest(method, { accessPolicy: { restricted: false, mappings: [] } }), res, path, principal, config(), fakeRedis());
+      expect(res.status).toBe(403);
+      expect(JSON.parse(res.body).error).toBe('ad_admin_required');
+    }
+    const res = captureRes();
+    await handleAdminApi(jsonRequest('GET'), res, 'registry', principal, config(), fakeRedis());
+    expect(JSON.parse(res.body).canManageAccessPolicy).toBe(false);
+    expect(dbState.rows).toHaveLength(0);
+  });
+
   it('refuses to PATCH the immutable bootstrap client', async () => {
     const res = await callApi('PATCH', 'registry/uar-portal', { enabled: false });
     expect(res.status).toBe(400);

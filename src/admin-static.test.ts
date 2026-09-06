@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { ADMIN_CSS, ADMIN_EDITOR_HTML, ADMIN_JS } from './admin-static';
 
 describe('auth manager presentation contracts', () => {
+  it('provides explicit restricted access and full-DN role mappings', () => {
+    expect(ADMIN_JS).toContain('No mappings means no access.');
+    expect(ADMIN_JS).toContain('AD group distinguished name');
+    expect(ADMIN_JS).toContain('Kubernetes administrator');
+    expect(ADMIN_JS).toContain('canManageAccessPolicy = data.canManageAccessPolicy === true');
+    expect(ADMIN_JS).toContain('accessPolicy: { restricted: restricted.checked, mappings: mappings }');
+    expect(ADMIN_JS).toContain('Sign in as an AD administrator to change application access.');
+  });
+
   it('ships executable console JavaScript', () => {
     expect(() => new Function(ADMIN_JS)).not.toThrow();
   });

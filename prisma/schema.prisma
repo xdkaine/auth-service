@@ -114,6 +114,7 @@ model OidcClient {
   backchannelLogoutUri String?
   scope             String    @default("openid email profile")
   enabled           Boolean   @default(true)
+  accessPolicy      Json      @default("{\"restricted\":false,\"mappings\":[]}")
   // Per-application provider-session lifetime (seconds). NULL => default/env.
   sessionTtlSeconds Int?
   createdBy         String

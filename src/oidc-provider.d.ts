@@ -6,6 +6,7 @@
  * global script declaration.
  */
 declare module 'oidc-provider' {
+  export const errors: { AccessDenied: new (description?: string) => Error };
   export interface AdapterPayload {
     [key: string]: unknown;
     userCode?: string;

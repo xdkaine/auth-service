@@ -1,3 +1,4 @@
+import { validateAccessPolicy } from './application-access';
 import type http from 'node:http';
 import { validateBrandingDoc, defaultBrandingDoc, type BrandingDoc } from './branding';
 import {
@@ -262,12 +263,24 @@ export async function handleAdminApi(
         // console can show/edit values the adapter will actually honor.
         sendJson(res, 200, {
           clients: await listOidcClients(),
+          canManageAccessPolicy: principal.authMethod === 'ad',
           ttlBounds: { min: MIN_SESSION_TTL_SECONDS, max: MAX_SESSION_TTL_SECONDS },
         });
         return;
       }
       if (method === 'POST' && !id) {
         const body = await readJsonBody(req);
+        if (body.accessPolicy !== undefined && principal.authMethod !== 'ad') {
+          sendJson(res, 403, { error: 'ad_admin_required' });
+          return;
+        }
+        const accessPolicy = body.accessPolicy === undefined
+          ? undefined
+          : validateAccessPolicy(body.accessPolicy);
+        if (accessPolicy === null) {
+          sendJson(res, 400, { error: 'invalid_access_policy', detail: 'Use full AD group DNs and viewer or administrator roles.' });
+          return;
+        }
         const name = typeof body.name === 'string' ? body.name.trim() : '';
         const uris = validateRedirectUris(body.redirectUris);
         const postLogoutUris = validateOptionalRedirectUris(body.postLogoutRedirectUris);
@@ -309,6 +322,7 @@ export async function handleAdminApi(
             scope: typeof body.scope === 'string' ? scopeCheck.scope : undefined,
             sessionTtlSeconds,
             createdBy: adminUsername,
+            ...(accessPolicy !== undefined ? { accessPolicy } : {}),
           },
           mirror,
           {
@@ -332,6 +346,17 @@ export async function handleAdminApi(
       }
       if (id && method === 'PATCH') {
         const body = await readJsonBody(req);
+        if (body.accessPolicy !== undefined && principal.authMethod !== 'ad') {
+          sendJson(res, 403, { error: 'ad_admin_required' });
+          return;
+        }
+        const accessPolicy = body.accessPolicy === undefined
+          ? undefined
+          : validateAccessPolicy(body.accessPolicy);
+        if (accessPolicy === null) {
+          sendJson(res, 400, { error: 'invalid_access_policy', detail: 'Use full AD group DNs and viewer or administrator roles.' });
+          return;
+        }
         const scopeCheck =
           body.scope !== undefined ? validateRequestedScope(body.scope) : undefined;
         if (scopeCheck && !scopeCheck.ok) {
@@ -405,6 +430,7 @@ export async function handleAdminApi(
               ? { enabled: body.enabled === true || body.enabled === 'true' }
               : {}),
             ...(scopeCheck?.ok ? { scope: scopeCheck.scope } : {}),
+            ...(accessPolicy !== undefined ? { accessPolicy } : {}),
             ...(ttlPatch !== undefined ? { sessionTtlSeconds: ttlPatch } : {}),
             ...(redirectUris !== undefined ? { redirectUris } : {}),
             ...(postLogoutUris !== undefined ? { postLogoutRedirectUris: postLogoutUris } : {}),
@@ -413,7 +439,9 @@ export async function handleAdminApi(
           mirror,
           {
             action: 'AUTH_CLIENT_UPDATED', actor: adminUsername,
-            details: { fields: Object.keys(body).filter((key) => key !== 'rotateSecret') },
+            details: { fields: Object.keys(body).filter((key) => key !== 'rotateSecret'),
+              ...(accessPolicy ? { restricted: accessPolicy.restricted, mappingCount: accessPolicy.mappings.length, roles: [...new Set(accessPolicy.mappings.map((mapping) => mapping.role))] } : {}),
+            },
           }
         );
         if (!updated) {

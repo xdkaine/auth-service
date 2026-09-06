@@ -1,3 +1,4 @@
+import { validateAccessPolicy, type ApplicationAccessPolicy } from './application-access';
 import { randomBytes } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { prisma, withSessionAdvisoryLock } from './db';
@@ -94,6 +95,7 @@ export interface OidcClientRow {
   enabled: boolean;
   /** Per-application provider-session lifetime; null => default/env. */
   sessionTtlSeconds: number | null;
+  accessPolicy?: ApplicationAccessPolicy;
   createdBy: string;
 }
 
@@ -298,6 +300,7 @@ export interface CreateClientInput {
   scope?: string;
   /** Optional per-app provider-session lifetime (seconds, clamped). */
   sessionTtlSeconds?: number | null;
+  accessPolicy?: ApplicationAccessPolicy;
   createdBy: string;
 }
 
@@ -423,6 +426,7 @@ export async function createOidcClient(
       scope: requireValidScope(input.scope),
       enabled: true,
       sessionTtlSeconds: clampSessionTtlSeconds(input.sessionTtlSeconds),
+      accessPolicy: requireAccessPolicy(input.accessPolicy ?? { restricted: false, mappings: [] }),
       createdBy: input.createdBy,
   };
   return exclusiveClientOperation(clientId, redisAdapter, async () => {
@@ -445,7 +449,14 @@ export async function createOidcClient(
   });
 }
 
+function requireAccessPolicy(value: unknown): ApplicationAccessPolicy {
+  const policy = validateAccessPolicy(value);
+  if (!policy) throw new Error("Invalid application access policy");
+  return policy;
+}
+
 type PrismaOidcClientRow = {
+  accessPolicy?: unknown;
   id: string;
   clientId: string;
   name: string;
@@ -471,6 +482,7 @@ function mapRow(row: PrismaOidcClientRow): OidcClientRow {
     scope: row.scope,
     enabled: row.enabled,
     sessionTtlSeconds: clampSessionTtlSeconds(row.sessionTtlSeconds),
+    accessPolicy: validateAccessPolicy(row.accessPolicy) ?? { restricted: true, mappings: [] },
     createdBy: row.createdBy,
   };
 }
@@ -575,6 +587,7 @@ export async function updateOidcClient(
     enabled?: boolean;
     /** null clears the override back to the default/env lifetime. */
     sessionTtlSeconds?: number | null;
+    accessPolicy?: ApplicationAccessPolicy;
   },
   redisAdapter: ReturnType<typeof providerClientAdapter>,
   audit?: ClientMutationAudit
@@ -592,6 +605,7 @@ export async function updateOidcClient(
     }
   }
   if (patch.enabled !== undefined) data.enabled = patch.enabled;
+  if (patch.accessPolicy !== undefined) data.accessPolicy = requireAccessPolicy(patch.accessPolicy);
   if (patch.sessionTtlSeconds !== undefined) {
     data.sessionTtlSeconds = clampSessionTtlSeconds(patch.sessionTtlSeconds);
   }

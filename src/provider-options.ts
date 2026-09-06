@@ -1,4 +1,4 @@
-import { interactionPolicy, type Adapter } from 'oidc-provider';
+import { errors, interactionPolicy, type Adapter } from 'oidc-provider';
 import type { AuthConfig } from './config';
 import { resolveSessionTtlSeconds } from './oidc-clients';
 import { providerErrorRenderer } from './public-ui';
@@ -23,13 +23,13 @@ export interface ProviderDependencies {
   /** Minimal Redis read surface for the amr lookup in findAccount. */
   redis: { get(key: string): Promise<string | null> };
   createAdapter: (name: string) => Adapter;
+  checkApplicationAccess?: (clientId: string, username: string) => Promise<{ allowed: boolean; restricted: boolean; groups: string[] }>;
 }
 
 /**
- * Profile claims cached at sign-in time (ADR-0012 amendment). Roles and
- * elevation stay OUT of tokens per the original decision - only descriptive
- * directory attributes (display name, real mail, group DNs) ride the opt-in
- * `groups` / `profile` scopes.
+ * Descriptive profile claims cached at sign-in time. These cached groups never
+ * authorize restricted applications. The separate k3s_groups claim comes only
+ * from a current application policy and live AD membership checks.
  */
 export interface CachedAccountClaims {
   name?: string;
@@ -115,7 +115,7 @@ export function buildProviderOptions(
     claims: {
       // Authorization-code ID tokens use the OpenID-only mask when userinfo
       // is enabled. Keep code-bound authentication evidence in that mask.
-      openid: ['sub', 'provider_session_expires_at', 'amr'],
+      openid: ['sub', 'provider_session_expires_at', 'amr', 'k3s_groups'],
       email: ['email'],
       profile: ['name', 'preferred_username'],
       // amr is emitted by oidc-provider from the exact authenticated Session.
@@ -165,6 +165,16 @@ export function buildProviderOptions(
     },
     adapter: deps.createAdapter,
     findAccount: async (ctx: unknown, id: string, token?: unknown) => {
+      const contextClient = (ctx as { oidc?: { client?: { clientId?: string } } })?.oidc?.client?.clientId;
+      const clientId = contextClient ?? (token as { clientId?: string } | undefined)?.clientId;
+      const checkAccess = async () => {
+        if (!deps.checkApplicationAccess) return { allowed: true, restricted: false, groups: [] as string[] };
+        if (!clientId) throw new errors.AccessDenied('Application access could not be verified');
+        const access = await deps.checkApplicationAccess(clientId, id);
+        if (!access.allowed) throw new errors.AccessDenied('Your account is not permitted to access this application');
+        return access;
+      };
+      await checkAccess();
       let cached: CachedAccountClaims = {};
       try {
         cached = parseCachedClaims(await deps.redis.get(claimsKey(id)));
@@ -193,7 +203,9 @@ export function buildProviderOptions(
       return {
         accountId: id,
         async claims() {
+          const access = await checkAccess();
           return {
+            ...(access.restricted ? { k3s_groups: access.groups } : {}),
             sub: id,
             ...(providerSessionExpiresAt ? { provider_session_expires_at: providerSessionExpiresAt } : {}),
             preferred_username: id,

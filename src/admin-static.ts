@@ -93,7 +93,7 @@ button[data-act="delete"],button.danger{background:var(--card);color:var(--text)
 .block-row{display:flex;align-items:center;gap:.6rem;margin-bottom:.45rem;padding:.62rem .7rem;background:var(--card);border:1px solid var(--border);border-radius:6px;cursor:grab}.block-row:hover{border-color:var(--border-strong)}.block-row.selected{border-color:var(--text);box-shadow:0 0 0 1px var(--text)}.block-row.dragging{opacity:.42}.block-row .label{flex:1;min-width:0}.block-row .title{font-weight:560;font-size:.81rem}.block-row .hint{color:var(--muted);font-size:.69rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.props .field{margin-bottom:.72rem}
 .layout{display:grid;grid-template-columns:250px minmax(0,1fr) 320px;gap:1rem;align-items:start}.palette button{width:100%;margin-bottom:.42rem;justify-content:flex-start;background:transparent;color:var(--text);border-color:var(--border-strong)}.palette button:hover{background:var(--hover)}
 .preview-frame{width:100%;max-width:900px;height:680px;background:var(--card-2);border:1px solid var(--border);border-radius:8px}.guide{margin-top:.7rem;padding:.85rem .95rem;background:var(--card-2);border:1px solid var(--border);border-radius:6px;font-size:.79rem}.guide ol{margin:.4rem 0 .35rem 1.15rem;padding:0}.guide li{margin:.28rem 0}.guide code{padding:.05rem .28rem;background:var(--hover);font-family:var(--font-data);font-size:.7rem}.secret-result,.secret-rotation{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem}.secret-result .secret-value{max-width:100%;overflow:auto;white-space:nowrap}.secret-result .notice,.secret-rotation .notice{width:100%;margin:.15rem 0 0}
-.reg-form{display:grid;grid-template-columns:repeat(4,1fr);gap:.7rem .8rem;align-items:end;margin-bottom:.4rem}.reg-form .field{margin:0}.reg-form .field-span2{grid-column:span 2}.reg-form button{min-height:39px}[data-per-client]{display:flex;gap:.4rem;flex-wrap:wrap;margin:0 0 .8rem}#local-accounts .block-row,#dash-editor .block-row{cursor:default}
+.access-mapping{display:flex;align-items:end;gap:.6rem;flex-wrap:wrap;margin:.75rem 0}.access-mapping label:first-child{flex:1;min-width:220px}.access-mapping label{display:grid;gap:.3rem}.reg-form{display:grid;grid-template-columns:repeat(4,1fr);gap:.7rem .8rem;align-items:end;margin-bottom:.4rem}.reg-form .field{margin:0}.reg-form .field-span2{grid-column:span 2}.reg-form button{min-height:39px}[data-per-client]{display:flex;gap:.4rem;flex-wrap:wrap;margin:0 0 .8rem}#local-accounts .block-row,#dash-editor .block-row{cursor:default}
 .scope-field{margin:0;padding:.65rem .75rem;border:1px solid var(--border);border-radius:6px}.scope-field legend{padding:0 .25rem;font-size:.76rem;font-weight:540}.scope-field label{display:grid;grid-template-columns:auto 1fr 2fr;gap:.45rem;align-items:center;margin:.35rem 0;font-size:.76rem}.scope-field label span{color:var(--muted);font-size:.7rem}
 
 /* Configuration and policy */
@@ -1554,6 +1554,7 @@ var fmtWhen = function (iso) {
 (function () {
   var ttlBounds = { min: 300, max: 1209600 };
   var issuer = '';
+  var canManageAccessPolicy = false;
   var GUIDES = {
     proxmox: {
       title: 'Proxmox VE (OIDC realm)',
@@ -1738,12 +1739,108 @@ var fmtWhen = function (iso) {
     if (!event.detail || event.detail.name !== 'clients') clearNewSecret();
   });
 
+  function appendAccessPolicy(card, client) {
+    var policy = client.accessPolicy || { restricted: false, mappings: [] };
+    var panel = document.createElement('details');
+    var summary = document.createElement('summary');
+    summary.textContent = 'Application access · ' + (policy.restricted ? 'Restricted' : 'Unrestricted');
+    panel.appendChild(summary);
+    var form = document.createElement('form');
+    var restrictedLabel = document.createElement('label');
+    var restricted = document.createElement('input');
+    restricted.type = 'checkbox';
+    restricted.checked = policy.restricted === true;
+    restricted.disabled = !canManageAccessPolicy;
+    restrictedLabel.appendChild(restricted);
+    restrictedLabel.appendChild(document.createTextNode(' Restricted application'));
+    form.appendChild(restrictedLabel);
+    var help = document.createElement('p');
+    help.className = 'notice';
+    help.textContent = 'Restricted applications allow only matching AD groups. No mappings means no access. Use the full distinguished name of a directly assigned AD group; group names alone do not match. Kubernetes enforces the permissions for each mapped role.';
+    form.appendChild(help);
+    if (!canManageAccessPolicy) {
+      var recoveryNotice = document.createElement('p');
+      recoveryNotice.className = 'notice';
+      recoveryNotice.textContent = 'Sign in as an AD administrator to change application access.';
+      form.appendChild(recoveryNotice);
+    }
+    var rows = document.createElement('div');
+    form.appendChild(rows);
+    function addMapping(mapping) {
+      var row = document.createElement('div');
+      row.className = 'access-mapping';
+      var groupLabel = document.createElement('label');
+      groupLabel.textContent = 'AD group distinguished name';
+      var group = document.createElement('input');
+      group.type = 'text';
+      group.required = true;
+      group.maxLength = 2048;
+      group.value = mapping.groupDn || '';
+      group.placeholder = 'CN=K3s-Viewers,OU=Groups,DC=example,DC=org';
+      group.disabled = !canManageAccessPolicy;
+      group.setAttribute('data-group-dn', 'true');
+      groupLabel.appendChild(group);
+      row.appendChild(groupLabel);
+      var roleLabel = document.createElement('label');
+      roleLabel.textContent = 'Access role';
+      var role = document.createElement('select');
+      role.disabled = !canManageAccessPolicy;
+      role.setAttribute('data-access-role', 'true');
+      [['viewer', 'Viewer'], ['administrator', 'Kubernetes administrator']].forEach(function (choice) {
+        var option = document.createElement('option');
+        option.value = choice[0];
+        option.textContent = choice[1];
+        role.appendChild(option);
+      });
+      role.value = mapping.role || 'viewer';
+      roleLabel.appendChild(role);
+      row.appendChild(roleLabel);
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'secondary';
+      remove.textContent = 'Remove mapping';
+      remove.disabled = !canManageAccessPolicy;
+      remove.addEventListener('click', function () { row.remove(); });
+      row.appendChild(remove);
+      rows.appendChild(row);
+    }
+    (policy.mappings || []).forEach(addMapping);
+    var add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'secondary';
+    add.textContent = 'Add AD group';
+    add.disabled = !canManageAccessPolicy;
+    add.addEventListener('click', function () { addMapping({}); });
+    form.appendChild(add);
+    var save = document.createElement('button');
+    save.type = 'submit';
+    save.textContent = 'Save access policy';
+    save.disabled = !canManageAccessPolicy;
+    form.appendChild(save);
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var mappings = Array.prototype.map.call(rows.children, function (row) {
+        return { groupDn: row.querySelector('[data-group-dn]').value.trim(), role: row.querySelector('[data-access-role]').value };
+      });
+      save.disabled = true;
+      api('PATCH', '/admin/api/registry/' + encodeURIComponent(client.clientId), {
+        accessPolicy: { restricted: restricted.checked, mappings: mappings }
+      }).then(function () {
+        setStatus('Saved access policy for ' + client.name + '.');
+        return loadClients();
+      }).catch(function (error) { save.disabled = false; setStatus(error.message, true); });
+    });
+    panel.appendChild(form);
+    card.appendChild(panel);
+  }
+
   function loadClients() {
     clearNewSecret();
     api('GET', '/admin/api/session')
       .then(function (session) { issuer = session.issuer || ''; return api('GET', '/admin/api/registry'); })
       .then(function (data) {
         applyTtlBounds(data.ttlBounds);
+        canManageAccessPolicy = data.canManageAccessPolicy === true;
         var list = el('clients-list');
         list.textContent = '';
         var rows = data.clients || [];
@@ -1809,6 +1906,7 @@ var fmtWhen = function (iso) {
           secretOut.className = 'notice';
           secretOut.setAttribute('aria-live', 'polite');
           card.appendChild(secretOut);
+          appendAccessPolicy(card, client);
           appendGuide(card, client.clientId);
           list.appendChild(card);
 

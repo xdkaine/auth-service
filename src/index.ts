@@ -1,3 +1,4 @@
+import { evaluateApplicationAccess } from './application-access';
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { createClient } from 'redis';
@@ -360,6 +361,7 @@ async function handleInteractionGet(req: http.IncomingMessage, res: http.ServerR
         res.end(await renderErrorPage('This sign-in session has expired. Return to the portal and try again.'));
         return;
       }
+      if (!await enforceApplicationAccess(req, res, accountId, String(details.params.client_id ?? ""))) return;
       const grant = new provider.Grant({
         accountId,
         clientId: details.params.client_id || config.clientId,
@@ -402,6 +404,30 @@ async function handleInteractionGet(req: http.IncomingMessage, res: http.ServerR
   }
 }
 
+async function checkApplicationAccess(clientId: string, username: string) {
+  if (clientId === config.clientId) return { allowed: true, restricted: false, groups: [] as string[] };
+  const access = await evaluateApplicationAccess(config, clientId, username);
+  if (!access.allowed) {
+    await prisma.auditLog.create({ data: {
+      action: 'AUTH_APPLICATION_ACCESS_DENIED', category: 'authentication',
+      username, subjectUsername: username, actorType: 'user', targetId: clientId,
+      eventKind: 'security', outcome: 'denied', success: false,
+      details: JSON.stringify({ surface: 'application_access', reason: 'application_policy_denied' }),
+    } }).catch(() => console.error('[auth] application access denial audit could not be persisted'));
+  }
+  return access;
+}
+
+async function enforceApplicationAccess(req: http.IncomingMessage, res: http.ServerResponse, accountId: string, clientId: string): Promise<boolean> {
+  if (clientId === config.clientId) return true;
+  const access = await checkApplicationAccess(clientId, accountId);
+  if (access.allowed) return true;
+  await provider.interactionFinished(req, res, {
+    error: 'access_denied', error_description: 'Your account is not permitted to access this application',
+  }, { mergeWithLastSubmission: false });
+  return false;
+}
+
 async function finishLogin(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -411,6 +437,8 @@ async function finishLogin(
   profile?: AdAccountProfile,
   extras?: { pwdChanged?: boolean }
 ): Promise<void> {
+  const details = await provider.interactionDetails(req, res);
+  if (!await enforceApplicationAccess(req, res, accountId, String(details.params.client_id ?? ""))) return;
   await storeClaims(accountId, profile);
   const sessionAmr = extras?.pwdChanged ? [...amr, 'pwd_changed'] : amr;
   await provider.interactionFinished(
@@ -1306,6 +1334,7 @@ async function main(): Promise<void> {
       {
         redis,
         createAdapter: (name: string): Adapter => new RedisAdapter(name, redis),
+        checkApplicationAccess,
       },
       // One keypair for everything the provider signs AND for back-channel
       // logout tokens (admin destroy emitter); RPs verify both via jwks_uri.
