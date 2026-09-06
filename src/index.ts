@@ -1388,7 +1388,7 @@ async function main(): Promise<void> {
 
     if (path === '/healthz') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
+      res.end(JSON.stringify({ ok: true, revision: process.env.APP_REVISION ?? "local", releaseProbe: "auth-delivery-v1" }));
       return;
     }
 

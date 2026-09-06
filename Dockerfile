@@ -29,6 +29,8 @@ FROM builder AS pruned
 RUN npm prune --omit=dev
 
 FROM node:22-alpine AS runner
+ARG APP_REVISION=local
+ENV APP_REVISION=$APP_REVISION
 ENV NODE_ENV=production
 WORKDIR /app
 RUN addgroup -S -g 1001 authsvc && adduser -S -u 1001 authsvc -G authsvc
