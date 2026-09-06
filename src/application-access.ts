@@ -2,9 +2,11 @@ import type { AuthConfig } from './config';
 import { prisma } from './db';
 import { loadAdAdminState } from './ldap';
 
-export type ApplicationAccessRole = 'viewer' | 'administrator';
+export type ApplicationAccessRole = 'viewer' | 'user' | 'administrator';
 export type ApplicationAccessPolicy = {
   restricted: boolean;
+  application?: 'k3s' | 'tbd' | 'cloud';
+  requiredGroupDns?: string[];
   mappings: Array<{ groupDn: string; role: ApplicationAccessRole }>;
 };
 export type ApplicationAccessResult = {
@@ -36,21 +38,34 @@ function fullGroupDn(value: unknown): value is string {
 
 /** Invalid persisted policy is never interpreted as unrestricted access. */
 export function validateAccessPolicy(value: unknown): ApplicationAccessPolicy | null {
-  if (!record(value) || !exactKeys(value, ['restricted', 'mappings'])
+  if (!record(value) || Object.keys(value).some((key) => !['restricted', 'mappings', 'application', 'requiredGroupDns'].includes(key))
     || typeof value.restricted !== 'boolean' || !Array.isArray(value.mappings)
     || value.mappings.length > 32) return null;
+  const application = value.application ?? 'k3s';
+  if (!['k3s', 'tbd', 'cloud'].includes(application as string)
+    || (Object.hasOwn(value, 'application') && typeof value.application !== 'string')) return null;
+  const requiredGroupDns = value.requiredGroupDns ?? [];
+  if ((Object.hasOwn(value, 'requiredGroupDns') && !Array.isArray(value.requiredGroupDns))
+    || !Array.isArray(requiredGroupDns) || requiredGroupDns.length > 32
+    || requiredGroupDns.some((dn) => !fullGroupDn(dn))
+    || new Set(requiredGroupDns.map((dn: string) => dn.toLowerCase())).size !== requiredGroupDns.length) return null;
+  const normalRole = application === 'k3s' ? 'viewer' : 'user';
   const mappings: ApplicationAccessPolicy['mappings'] = [];
   const seen = new Set<string>();
   for (const mapping of value.mappings) {
     if (!record(mapping) || !exactKeys(mapping, ['groupDn', 'role'])
       || !fullGroupDn(mapping.groupDn)
-      || (mapping.role !== 'viewer' && mapping.role !== 'administrator')) return null;
+      || (mapping.role !== normalRole && mapping.role !== 'administrator')) return null;
     const key = `${mapping.groupDn.toLowerCase()}\0${mapping.role}`;
     if (seen.has(key)) return null;
     seen.add(key);
-    mappings.push({ groupDn: mapping.groupDn, role: mapping.role });
+    mappings.push({ groupDn: mapping.groupDn, role: mapping.role as ApplicationAccessRole });
   }
-  return { restricted: value.restricted, mappings };
+  return {
+    restricted: value.restricted, mappings,
+    ...(Object.hasOwn(value, 'application') ? { application: application as ApplicationAccessPolicy['application'] } : {}),
+    ...(Object.hasOwn(value, 'requiredGroupDns') ? { requiredGroupDns: requiredGroupDns as string[] } : {}),
+  };
 }
 
 /** Bootstrap clients are exempted explicitly by the caller, never by DB failure. */
@@ -72,10 +87,14 @@ export async function evaluateApplicationAccess(
       || !Array.isArray(directory.memberOf)
       || directory.memberOf.some((group) => typeof group !== 'string')) return denied;
     const memberOf = new Set(directory.memberOf.map((group) => group.toLowerCase()));
+    const requiredGroupDns = policy.requiredGroupDns ?? [];
+    if (!requiredGroupDns.every((dn) => memberOf.has(dn.toLowerCase()))) return denied;
+    const application = policy.application ?? 'k3s';
     const groups = [...new Set(policy.mappings
       .filter((mapping) => memberOf.has(mapping.groupDn.toLowerCase()))
-      .map((mapping) => `k3s:${mapping.role}`))].sort();
-    return { restricted: true, allowed: groups.length > 0, groups };
+      .map((mapping) => `${application}:${mapping.role}`))].sort();
+    if (groups.length > 0 && requiredGroupDns.length > 0) groups.push(`${application}:access`);
+    return { restricted: true, allowed: groups.length > 0, groups: groups.sort() };
   } catch {
     return denied;
   }

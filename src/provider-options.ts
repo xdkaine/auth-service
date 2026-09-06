@@ -115,7 +115,7 @@ export function buildProviderOptions(
     claims: {
       // Authorization-code ID tokens use the OpenID-only mask when userinfo
       // is enabled. Keep code-bound authentication evidence in that mask.
-      openid: ['sub', 'provider_session_expires_at', 'amr', 'k3s_groups'],
+      openid: ['sub', 'provider_session_expires_at', 'amr', 'k3s_groups', 'application_roles'],
       email: ['email'],
       profile: ['name', 'preferred_username'],
       // amr is emitted by oidc-provider from the exact authenticated Session.
@@ -205,7 +205,9 @@ export function buildProviderOptions(
         async claims() {
           const access = await checkAccess();
           return {
-            ...(access.restricted ? { k3s_groups: access.groups } : {}),
+            ...(access.restricted ? { application_roles: access.groups } : {}),
+            ...(access.restricted && access.groups.some((group) => group.startsWith('k3s:'))
+              ? { k3s_groups: access.groups.filter((group) => group.startsWith('k3s:')) } : {}),
             sub: id,
             ...(providerSessionExpiresAt ? { provider_session_expires_at: providerSessionExpiresAt } : {}),
             preferred_username: id,

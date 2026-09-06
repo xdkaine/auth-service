@@ -32,6 +32,13 @@ describe('restricted provider account and token gates', () => {
     check.mockResolvedValue({ allowed: true, restricted: false, groups: [] });
     expect(await (await find({ oidc: { client: { clientId: 'other' } } }, 'alice')).claims()).not.toHaveProperty('k3s_groups');
   });
+  it('keeps non-Kubernetes application roles out of Kubernetes claims', async () => {
+    const { find, check } = fixture();
+    check.mockResolvedValue({ allowed: true, restricted: true, groups: ['tbd:access', 'tbd:administrator'] });
+    const claims = await (await find({ oidc: { client: { clientId: 'tbd' } } }, 'alice')).claims();
+    expect(claims.application_roles).toEqual(['tbd:access', 'tbd:administrator']);
+    expect(claims).not.toHaveProperty('k3s_groups');
+  });
   it('denies a missing client identity', async () => {
     await expect(fixture().find({}, 'alice')).rejects.toThrow('access_denied');
   });

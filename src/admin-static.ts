@@ -1756,7 +1756,7 @@ var fmtWhen = function (iso) {
     form.appendChild(restrictedLabel);
     var help = document.createElement('p');
     help.className = 'notice';
-    help.textContent = 'Restricted applications allow only matching AD groups. No mappings means no access. Use the full distinguished name of a directly assigned AD group; group names alone do not match. Kubernetes enforces the permissions for each mapped role.';
+    help.textContent = 'Restricted applications require every prerequisite group and at least one role mapping. No mappings means no access. Use full distinguished names of directly assigned AD groups. An administrator mapping never bypasses the prerequisites. Permissions are scoped to the selected application.';
     form.appendChild(help);
     if (!canManageAccessPolicy) {
       var recoveryNotice = document.createElement('p');
@@ -1764,8 +1764,48 @@ var fmtWhen = function (iso) {
       recoveryNotice.textContent = 'Sign in as an AD administrator to change application access.';
       form.appendChild(recoveryNotice);
     }
+    var applicationLabel = document.createElement('label');
+    applicationLabel.textContent = 'Application role namespace';
+    var application = document.createElement('select');
+    application.disabled = !canManageAccessPolicy;
+    [['k3s', 'Headlamp / Kubernetes'], ['tbd', 'Tbd'], ['cloud', 'Cloud']].forEach(function (choice) {
+      var option = document.createElement('option');
+      option.value = choice[0]; option.textContent = choice[1]; application.appendChild(option);
+    });
+    application.value = policy.application || 'k3s';
+    applicationLabel.appendChild(application); form.appendChild(applicationLabel);
+    var requiredHelp = document.createElement('p');
+    requiredHelp.textContent = 'Required AD groups (all must match). With no prerequisites, legacy policies allow any mapped group.';
+    form.appendChild(requiredHelp);
+    var requiredRows = document.createElement('div');
+    form.appendChild(requiredRows);
+    function addRequiredGroup(dn) {
+      var row = document.createElement('div'); row.className = 'access-mapping';
+      var label = document.createElement('label'); label.textContent = 'Required AD group distinguished name';
+      var input = document.createElement('input'); input.type = 'text'; input.required = true; input.maxLength = 2048;
+      input.value = dn || ''; input.disabled = !canManageAccessPolicy;
+      label.appendChild(input); row.appendChild(label);
+      var remove = document.createElement('button'); remove.type = 'button'; remove.className = 'secondary';
+      remove.textContent = 'Remove prerequisite'; remove.disabled = !canManageAccessPolicy;
+      remove.addEventListener('click', function () { row.remove(); }); row.appendChild(remove); requiredRows.appendChild(row);
+    }
+    (policy.requiredGroupDns || []).forEach(addRequiredGroup);
+    var addRequired = document.createElement('button'); addRequired.type = 'button'; addRequired.className = 'secondary';
+    addRequired.textContent = 'Add required AD group'; addRequired.disabled = !canManageAccessPolicy;
+    addRequired.addEventListener('click', function () { addRequiredGroup(''); }); form.appendChild(addRequired);
     var rows = document.createElement('div');
     form.appendChild(rows);
+    function fillRoles(role, selected) {
+      role.textContent = '';
+      var normalRole = application.value === 'k3s' ? 'viewer' : 'user';
+      [[normalRole, normalRole === 'viewer' ? 'Viewer' : 'User'], ['administrator', application.value === 'k3s' ? 'Kubernetes administrator' : 'Application administrator']].forEach(function (choice) {
+        var option = document.createElement('option'); option.value = choice[0]; option.textContent = choice[1]; role.appendChild(option);
+      });
+      role.value = selected === 'administrator' ? 'administrator' : normalRole;
+    }
+    application.addEventListener('change', function () {
+      Array.prototype.forEach.call(rows.querySelectorAll('[data-access-role]'), function (role) { fillRoles(role, role.value); });
+    });
     function addMapping(mapping) {
       var row = document.createElement('div');
       row.className = 'access-mapping';
@@ -1786,13 +1826,7 @@ var fmtWhen = function (iso) {
       var role = document.createElement('select');
       role.disabled = !canManageAccessPolicy;
       role.setAttribute('data-access-role', 'true');
-      [['viewer', 'Viewer'], ['administrator', 'Kubernetes administrator']].forEach(function (choice) {
-        var option = document.createElement('option');
-        option.value = choice[0];
-        option.textContent = choice[1];
-        role.appendChild(option);
-      });
-      role.value = mapping.role || 'viewer';
+      fillRoles(role, mapping.role);
       roleLabel.appendChild(role);
       row.appendChild(roleLabel);
       var remove = document.createElement('button');
@@ -1822,9 +1856,10 @@ var fmtWhen = function (iso) {
       var mappings = Array.prototype.map.call(rows.children, function (row) {
         return { groupDn: row.querySelector('[data-group-dn]').value.trim(), role: row.querySelector('[data-access-role]').value };
       });
+      var requiredGroupDns = Array.prototype.map.call(requiredRows.querySelectorAll('input'), function (input) { return input.value.trim(); });
       save.disabled = true;
       api('PATCH', '/admin/api/registry/' + encodeURIComponent(client.clientId), {
-        accessPolicy: { restricted: restricted.checked, mappings: mappings }
+        accessPolicy: { restricted: restricted.checked, application: application.value, requiredGroupDns: requiredGroupDns, mappings: mappings }
       }).then(function () {
         setStatus('Saved access policy for ' + client.name + '.');
         return loadClients();

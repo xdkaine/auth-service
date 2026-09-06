@@ -83,8 +83,9 @@ describe('widened claims contract (ADR-0012 amendment)', () => {
     expect(claims.email).toEqual(['email']);
     expect(claims.amr).toEqual(['amr']);
     expect(claims.openid).toContain('provider_session_expires_at');
-    // Roles stay out of the contract.
-    expect(JSON.stringify(claims)).not.toContain('roles');
+    // Application roles are separately scoped and never sourced from cached AD groups.
+    expect(claims.openid).toContain('application_roles');
+    expect(claims.groups).not.toContain('application_roles');
   });
 
   it('retains code-bound AD authority in an OpenID-only ID token mask', async () => {

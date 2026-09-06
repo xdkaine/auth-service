@@ -6,8 +6,10 @@ describe('auth manager presentation contracts', () => {
     expect(ADMIN_JS).toContain('No mappings means no access.');
     expect(ADMIN_JS).toContain('AD group distinguished name');
     expect(ADMIN_JS).toContain('Kubernetes administrator');
+    expect(ADMIN_JS).toContain('Required AD groups (all must match)');
+    expect(ADMIN_JS).toContain('An administrator mapping never bypasses the prerequisites.');
     expect(ADMIN_JS).toContain('canManageAccessPolicy = data.canManageAccessPolicy === true');
-    expect(ADMIN_JS).toContain('accessPolicy: { restricted: restricted.checked, mappings: mappings }');
+    expect(ADMIN_JS).toContain('accessPolicy: { restricted: restricted.checked, application: application.value, requiredGroupDns: requiredGroupDns, mappings: mappings }');
     expect(ADMIN_JS).toContain('Sign in as an AD administrator to change application access.');
   });
 

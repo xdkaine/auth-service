@@ -101,3 +101,56 @@ describe('evaluateApplicationAccess', () => {
     expect(mocks.directory).toHaveBeenCalledTimes(2);
   });
 });
+
+describe.each(['k3s', 'tbd', 'cloud'] as const)('%s mandatory access and role isolation', (application) => {
+  const access = `CN=${application}-access,OU=Groups,DC=example,DC=org`;
+  const admin = `CN=${application}-administrator,OU=Groups,DC=example,DC=org`;
+  const normalRole = application === 'k3s' ? 'viewer' : 'user';
+  beforeEach(() => {
+    mocks.findUnique.mockResolvedValue({ enabled: true, accessPolicy: {
+      restricted: true, application, requiredGroupDns: [access],
+      mappings: [{ groupDn: access, role: normalRole }, { groupDn: admin, role: 'administrator' }],
+    } });
+  });
+  it.each([
+    { memberships: [], roles: [] },
+    { memberships: [admin], roles: [] },
+    { memberships: [access], roles: ['access', normalRole] },
+    { memberships: [access, admin], roles: ['access', 'administrator', normalRole] },
+  ])('enforces access prerequisite for $memberships', async ({ memberships, roles }) => {
+    mocks.directory.mockResolvedValue({ ok: true, disabled: false, locked: false, memberOf: memberships });
+    expect(await evaluateApplicationAccess(config, application, 'alice')).toEqual({
+      restricted: true, allowed: roles.length > 0, groups: roles.map((role) => `${application}:${role}`).sort(),
+    });
+  });
+  it('does not accept membership from another application', async () => {
+    mocks.directory.mockResolvedValue({ ok: true, disabled: false, locked: false,
+      memberOf: ['CN=unrelated-access,OU=Groups,DC=example,DC=org', admin] });
+    expect(await evaluateApplicationAccess(config, application, 'alice')).toEqual(denied);
+  });
+});
+
+describe('prerequisite policy validation', () => {
+  it.each([
+    { application: 'portal' }, { application: null }, { requiredGroupDns: null },
+    { requiredGroupDns: ['Readers'] }, { requiredGroupDns: [groupDn, groupDn.toUpperCase()] },
+    { requiredGroupDns: Array.from({ length: 33 }, (_, i) => `CN=Required${i},DC=org`) },
+    { application: 'cloud', mappings: [{ groupDn, role: 'viewer' }] },
+    { application: 'k3s', mappings: [{ groupDn, role: 'user' }] },
+  ])('fails closed for malformed extension %j', (extension) => {
+    expect(validateAccessPolicy({ ...policy, ...extension })).toBeNull();
+  });
+  it('requires every prerequisite even when a role matches', async () => {
+    mocks.findUnique.mockResolvedValue({ enabled: true, accessPolicy: {
+      ...policy, requiredGroupDns: [groupDn, 'CN=Additional,DC=example,DC=org'],
+    } });
+    expect(await evaluateApplicationAccess(config, 'headlamp', 'alice')).toEqual(denied);
+  });
+  it('does not emit access marker without a matching role', async () => {
+    mocks.findUnique.mockResolvedValue({ enabled: true, accessPolicy: {
+      restricted: true, requiredGroupDns: [groupDn],
+      mappings: [{ groupDn: 'CN=Other,DC=example,DC=org', role: 'administrator' }],
+    } });
+    expect(await evaluateApplicationAccess(config, 'headlamp', 'alice')).toEqual(denied);
+  });
+});
